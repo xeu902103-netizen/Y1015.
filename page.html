@@ -125,6 +125,7 @@ background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 6px 16px 
     <div class="qr-hint" id="qrHint">正在生成二维码…</div>
     <button class="applogin" id="btnAppLogin">📱 就在这台手机上登录</button>
     <div class="help" style="text-align:center;margin:8px 0 0">装了网易云 App 的话，点上面的按钮会直接打开 App 确认登录</div>
+    <button class="ghost small hide" id="btnForceLogin" style="width:100%;margin-top:8px">✅ 已在手机上确认，立即检查</button>
     <div class="steps"><span>① 打开网易云 App</span><span>② 扫一扫</span><span>③ 确认登录</span></div>
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="ghost small" id="btnRefreshQr" style="flex:1">刷新二维码</button>
@@ -313,6 +314,7 @@ async function startQr(){
   [...$('#qrFrame').querySelectorAll('svg')].forEach(n => n.remove());
   setOverlay(false);
   $('#qrHint').innerHTML = '<span class="spin"></span> 正在生成二维码…';
+  $('#btnForceLogin').classList.add('hide');
   try{
     const r = await api('login_qr');
     paintQr(r.svg);
@@ -361,10 +363,17 @@ async function check(t, ticks){
     const j = await fetch(BASE + '?a=login_check&p=' + platform + '&token=' + encodeURIComponent(t), { cache:'no-store' }).then(r=>r.json());
     if(j.status === 'scanned'){
       $('#qrHint').innerHTML = '<b style="color:var(--ok)">已扫码</b>，请在手机上点「确认登录」…';
+      $('#btnForceLogin').classList.remove('hide');
       setOverlay(false);
       // 注意：这里绝不能停轮询，否则永远收不到 803（登录成功）
       if(!pollTimer){
         pollTimer = setInterval(() => check(t, 2), 1500);
+      }
+      // 停在「已扫码」超过约 20 秒，自动重新检查一次（部分机型确认后网页收不到推送）
+      window._scannedTicks = (window._scannedTicks || 0) + 1;
+      if(window._scannedTicks === 12){
+        window._scannedTicks = 0;
+        tryForceLogin(true);
       }
     }
     else if(j.status === 'ok'){
@@ -398,9 +407,50 @@ async function check(t, ticks){
       $('#qrHint').textContent = j.error || '二维码已失效，点刷新';
       setOverlay(true, '二维码已失效');
     }
-    else if(ticks && ticks % 6 === 0){ $('#qrHint').textContent = '仍在等待扫码…（15 分钟内有效）'; }
+    else if(ticks && ticks % 6 === 0){
+      const d = j.seen ? `（web=${j.seen.web}${j.seen.eapi !== undefined ? ', eapi=' + j.seen.eapi : ''}）` : '';
+      $('#qrHint').textContent = '仍在等待扫码…' + d;
+    }
   }catch(e){}
 }
+$('#btnForceLogin').onclick = () => tryForceLogin(false);
+
+async function tryForceLogin(silent){
+  const t = window._qrToken;
+  if(!t){ if(!silent) toast('二维码已失效，请刷新'); return; }
+  const btn = $('#btnForceLogin');
+  btn.disabled = true; const old = btn.textContent;
+  if(!silent) btn.innerHTML = '<span class="spin"></span> 检查中';
+  try{
+    const j = await fetch(BASE + '?a=force_login', {
+      method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ token: t }),
+    }).then(r => r.json());
+    if(j.status === 'ok' && j.sess){
+      saveSess(j.sess);
+      clearQr();
+      status.netease = {
+        loggedIn: true,
+        nickname: j.nickname || '已登录',
+        avatar: j.avatar || '',
+        vip: !!j.vip,
+        userId: j.userId || '',
+      };
+      clearInterval(pollTimer); pollTimer = null;
+      applyBrand();
+      toast('登录成功');
+      setTimeout(refreshStatus, 1200);
+    } else {
+      const d = j.diagnostics || {};
+      if(!silent){
+        toast('还没确认成功：web=' + (d.web ?? '?') + ' eapi=' + (d.eapi ?? '?'));
+        $('#qrHint').textContent = '还没检测到确认（web=' + (d.web ?? '?') + ', eapi=' + (d.eapi ?? '?') + '）';
+      }
+    }
+  }catch(e){ if(!silent) toast('检查失败：' + e.message); }
+  btn.disabled = false; btn.textContent = old || '✅ 已在手机上确认，立即检查';
+};
+
 $('#btnAppLogin').onclick = () => {
   if(!qrLinkText){ toast('二维码还没生成好，稍等'); return; }
   location.href = qrLinkText;   // 网易云 App 注册了这个链接，会直接唤起并弹「确认登录」

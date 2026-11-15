@@ -187,21 +187,40 @@ function pickLoginCookie(j) {
  */
 const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
-async function webQrUnikey() {
-  const { text } = await httpText('https://music.163.com/api/login/qrcode/unikey?type=3', {
-    headers: { 'User-Agent': WEB_UA, Referer: 'https://music.163.com/' },
-  });
-  const j = JSON.parse(text);
-  return j.unikey || '';
+/** 把 {k:v} 变成 Cookie 头 */
+function cookieHeader(obj) {
+  return Object.entries(obj || {}).map(([k, v]) => k + '=' + v).join('; ');
 }
 
-async function webQrCheck(key) {
+function mergeCookies(a, b) {
+  return { ...(a || {}), ...(b || {}) };
+}
+
+async function webQrUnikey(cookieStr = '') {
+  const { text, setCookie } = await httpText('https://music.163.com/api/login/qrcode/unikey?type=3', {
+    headers: {
+      'User-Agent': WEB_UA,
+      Referer: 'https://music.163.com/',
+      ...(cookieStr ? { Cookie: cookieStr } : {}),
+    },
+  });
+  const j = JSON.parse(text);
+  return { unikey: j.unikey || '', cookies: parseSetCookie(setCookie) };
+}
+
+async function webQrCheck(key, cookieObj = {}) {
   const { text, setCookie } = await httpText(
     'https://music.163.com/api/login/qrcode/client/login?key=' + encodeURIComponent(key) + '&type=3',
-    { headers: { 'User-Agent': WEB_UA, Referer: 'https://music.163.com/' } });
+    {
+      headers: {
+        'User-Agent': WEB_UA,
+        Referer: 'https://music.163.com/',
+        ...(Object.keys(cookieObj).length ? { Cookie: cookieHeader(cookieObj) } : {}),
+      },
+    });
   let j = {};
   try { j = JSON.parse(text); } catch (e) { }
-  const cookies = parseSetCookie(setCookie);
+  const cookies = mergeCookies(cookieObj, parseSetCookie(setCookie));
   if (j.cookie) {
     for (const kv of String(j.cookie).split(';')) {
       const i = kv.indexOf('=');
@@ -435,6 +454,41 @@ async function handleApi(url, req) {
   const sess = await readSess(req);
 
   try {
+    if (a === 'force_login') {
+      const body = await req.json();
+      const blob = String(body.token || '');
+      const st = await openSess(blob);
+      if (!st || !st.qr) return json({ error: '二维码已失效，请刷新重试' }, 400);
+      const out = { diagnostics: {} };
+      // 网页接口（带 cookie）
+      try {
+        const w = await webQrCheck(st.qr, st.ck || {});
+        out.diagnostics.web = w.code;
+        if (w.code === 803 && w.cookies && w.cookies.MUSIC_U) {
+          out.status = 'ok';
+          out.sess = await sealSess({ ncm: pickCookieObj(w.cookies) });
+          const me = await profile(pickCookieObj(w.cookies));
+          if (me) Object.assign(out, me);
+          return json(out);
+        }
+      } catch (e) { out.diagnostics.web = 'err'; }
+      // 客户端接口
+      try {
+        const r = await ncm('login/qrcode/client/login', { key: st.qr, type: 3 });
+        out.diagnostics.eapi = Number(r.code || 0);
+        const ck = pickLoginCookie(r);
+        if (Number(r.code || 0) === 803 && ck.MUSIC_U) {
+          out.status = 'ok';
+          out.sess = await sealSess({ ncm: ck });
+          const me = await profile(ck);
+          if (me) Object.assign(out, me);
+          return json(out);
+        }
+      } catch (e) { out.diagnostics.eapi = 'err'; }
+      out.status = 'waiting';
+      return json(out);
+    }
+
     if (a === 'me') {
       if (!sess.ncm || !sess.ncm.MUSIC_U) return json({ loggedIn: false });
       const me = await profile(sess.ncm);
@@ -456,7 +510,12 @@ async function handleApi(url, req) {
     if (a === 'login_qr') {
       let key = '';
       let via = 'web';
-      try { key = await webQrUnikey(); } catch (e) { }
+      let qrCookies = {};
+      try {
+        const r = await webQrUnikey();
+        key = r.unikey;
+        qrCookies = r.cookies || {};
+      } catch (e) { }
       if (!key) {
         via = 'eapi';
         try {
@@ -466,7 +525,7 @@ async function handleApi(url, req) {
       }
       if (!key) return json({ error: '获取二维码失败（网易云接口异常）' }, 502);
       const link = 'https://music.163.com/login?codekey=' + key;
-      const blob = await sealSess({ qr: key, ts: Math.floor(Date.now() / 1000) });
+      const blob = await sealSess({ qr: key, ck: qrCookies, ts: Math.floor(Date.now() / 1000) });
       return json({ token: blob, qrurl: link, svg: qrSvg(link, 4), via });
     }
 
@@ -477,15 +536,21 @@ async function handleApi(url, req) {
       let code = 0;
       let ck = null;
       let via = 'web';
+      const seen = {};
       try {
-        const w = await webQrCheck(st.qr);
+        const w = await webQrCheck(st.qr, st.ck || {});
         code = w.code;
+        seen.web = w.code;
+        seen.webMsg = w.message;
         if (code === 803) ck = pickCookieObj(w.cookies);
-      } catch (e) { via = 'eapi'; }
+      } catch (e) { seen.web = 'err:' + String(e).slice(0, 60); via = 'eapi'; }
       if (via === 'eapi' || !code) {
-        const r = await ncm('login/qrcode/client/login', { key: st.qr, type: 3 });
-        code = Number(r.code || 0);
-        if (code === 803) ck = pickLoginCookie(r);
+        try {
+          const r = await ncm('login/qrcode/client/login', { key: st.qr, type: 3 });
+          code = Number(r.code || 0);
+          seen.eapi = code;
+          if (code === 803) ck = pickLoginCookie(r);
+        } catch (e) { seen.eapi = 'err'; }
       }
       if (code === 803 && (!ck || !ck.MUSIC_U)) {
         // 网页接口没给 cookie 时，再用客户端接口问一次同一个 key
@@ -503,9 +568,9 @@ async function handleApi(url, req) {
         } catch (e) { }
         return json(me);
       }
-      if (code === 802) return json({ code: 802, status: 'scanned' });
-      if (code === 800 || Math.floor(Date.now() / 1000) - (st.ts || 0) > 900) return json({ code: 800, status: 'expired', error: '二维码已过期，请刷新' });
-      return json({ code: 801, status: 'waiting' });
+      if (code === 802) return json({ code: 802, status: 'scanned', seen });
+      if (code === 800 || Math.floor(Date.now() / 1000) - (st.ts || 0) > 900) return json({ code: 800, status: 'expired', error: '二维码已过期，请刷新', seen });
+      return json({ code: 801, status: 'waiting', seen });
     }
 
     if (a === 'set_cookie') {
