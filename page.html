@@ -325,7 +325,7 @@ async function startQr(){
     window._qrToken = r.token;
     storeQr({ token: r.token, svg: r.svg, url: qrLinkText, ts: Date.now() });
     let ticks = 0;
-    pollTimer = setInterval(() => { ticks++; check(r.token, ticks); }, 1800);
+    pollTimer = setInterval(() => { ticks++; check(r.token, ticks); }, 1500);
     check(r.token, 0);
   }catch(e){
     $('#qrHint').innerHTML = '生成失败：' + esc(e.message);
@@ -350,7 +350,7 @@ function resumeQr(){
   $('#qrHint').innerHTML = '还在等确认…（用<b>网易云音乐</b>点「确认登录」）';
   window._qrToken = st.token;
   clearInterval(pollTimer); pollTimer = null;
-  pollTimer = setInterval(() => check(st.token, 1), 1800);
+  pollTimer = setInterval(() => check(st.token, 1), 1500);
   check(st.token, 0);
   return true;
 }
@@ -360,10 +360,12 @@ async function check(t, ticks){
   try{
     const j = await fetch(BASE + '?a=login_check&p=' + platform + '&token=' + encodeURIComponent(t), { cache:'no-store' }).then(r=>r.json());
     if(j.status === 'scanned'){
-      $('#qrHint').innerHTML = '<b style="color:var(--ok)">已扫码</b>，请在手机上点「确认登录」';
+      $('#qrHint').innerHTML = '<b style="color:var(--ok)">已扫码</b>，请在手机上点「确认登录」…';
       setOverlay(false);
-      // 每 2 秒催一次，确认后尽快跳转
-      if(ticks && ticks === 1) clearInterval(pollTimer);
+      // 注意：这里绝不能停轮询，否则永远收不到 803（登录成功）
+      if(!pollTimer){
+        pollTimer = setInterval(() => check(t, 2), 1500);
+      }
     }
     else if(j.status === 'ok'){
       clearInterval(pollTimer); pollTimer = null;

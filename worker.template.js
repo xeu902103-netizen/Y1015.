@@ -487,6 +487,13 @@ async function handleApi(url, req) {
         code = Number(r.code || 0);
         if (code === 803) ck = pickLoginCookie(r);
       }
+      if (code === 803 && (!ck || !ck.MUSIC_U)) {
+        // 网页接口没给 cookie 时，再用客户端接口问一次同一个 key
+        try {
+          const r = await ncm('login/qrcode/client/login', { key: st.qr, type: 3 });
+          if (Number(r.code || 0) === 803) ck = pickLoginCookie(r);
+        } catch (e) { }
+      }
       if (code === 803) {
         if (!ck || !ck.MUSIC_U) return json({ code: 803, status: 'fail', error: '登录成功但没拿到 Cookie，请刷新重试' });
         const me = { code: 803, status: 'ok', loggedIn: true, nickname: '已登录', sess: await sealSess({ ncm: ck }) };
