@@ -570,6 +570,7 @@ function renderResult(r){
 function dlUrl(id, name){
   let u = BASE + '?a=download&p='+platform+'&id='+encodeURIComponent(id)+'&level='+encodeURIComponent(level);
   if(name) u += '&name=' + encodeURIComponent(name);
+  if(sess) u += '&s=' + encodeURIComponent(sess);   // <a> 跳转带不了请求头，用参数传登录态
   return u;
 }
 function triggerDownload(u){ const a=document.createElement('a'); a.href=u; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); }

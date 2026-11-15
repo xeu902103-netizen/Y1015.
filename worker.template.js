@@ -14,6 +14,11 @@
 const DONATE_WECHAT = { type: 'image/webp', b64: '@@WECHAT_B64@@' };
 const DONATE_ALIPAY = { type: 'image/jpeg', b64: '@@ALIPAY_B64@@' };
 
+/* 可选：网易云取地址中转（把 relay.php 放到国内 PHP 主机后填这里，能解决 404）
+ * 例如 'https://abc.com/relay.php'；留空表示不用中转 */
+const RELAY = '';
+const RELAY_TOKEN = 'change-me-please';
+
 const APP_VER = '9.0.90';
 const SESSION_TTL = 43200;      // 12 小时
 const UA_NCM = 'NeteaseMusic/' + APP_VER + '.1734239895(8008090);Dalvik/2.1.0 (Linux; U; Android 14)';
@@ -350,8 +355,27 @@ async function songDetail(ids, session) {
 
 const LEVEL_BR = { standard: 128000, higher: 192000, exhigh: 320000, lossless: 999000 };
 
-/** 取播放地址：客户端接口 → 老接口，多音质逐级降级；失败时带回网易云的原始 code */
+/** 通过国内中转取地址（可选） */
+async function relayUrl(id, level, session, diag = {}) {
+  if (!RELAY) return null;
+  try {
+    const cookie = 'MUSIC_U=' + (session.MUSIC_U || '') + (session.__csrf ? '; __csrf=' + session.__csrf : '');
+    const res = await fetch(RELAY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: RELAY_TOKEN, id, level, cookie }),
+    });
+    const j = await res.json();
+    if (j && j.url) return { url: httpsify(j.url), type: j.type || 'mp3', br: j.br || 0, size: j.size || 0, level: j.level || level };
+    diag.relay = j && j.diag ? j.diag : (j && j.error) || res.status;
+  } catch (e) { diag.relay = 'err'; }
+  return null;
+}
+
+/** 取播放地址：中转 → 客户端接口 → 老接口，多音质逐级降级；失败时带回原始 code */
 async function songUrl(id, level, session, diag = {}) {
+  const viaRelay = await relayUrl(id, level, session, diag);
+  if (viaRelay) return viaRelay;
   try {
     const j = await ncm('song/enhance/player/url/v1', { ids: '[' + id + ']', level, encodeType: 'mp3' }, session);
     const d = (j.data && j.data[0]) || {};
@@ -460,16 +484,18 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
 });
 
-async function readSess(req) {
+async function readSess(req, url) {
+  // 普通链接跳转（下载）带不了请求头，所以也支持 ?s=签名串
+  const q = url ? (url.searchParams.get('s') || '') : '';
   const hdr = req.headers.get('x-sess') || '';
-  const s = await openSess(hdr);
+  const s = (await openSess(hdr)) || (q ? await openSess(q) : null);
   return s || {};
 }
 
 async function handleApi(url, req) {
   const a = url.searchParams.get('a') || '';
   const p = url.searchParams.get('p') || 'netease';
-  const sess = await readSess(req);
+  const sess = await readSess(req, url);
 
   try {
     if (a === 'force_login') {
@@ -715,7 +741,7 @@ async function handleApi(url, req) {
       else {
         const diag = {};
         u = await songUrl(id, level, sess.ncm || {}, diag);
-        if (!u) return json({ error: '没有可用地址（网易云返回 ' + JSON.stringify(diag) + '）', diag }, 404);
+        if (!u) return json({ error: '没有可用地址（网易云返回 ' + JSON.stringify(diag) + '；404 一般是地区/版权限制，可点「下载」走手机直连试试）', diag }, 404);
       }
       if (!u) return json({ error: '没有可用地址' }, 404);
       return json({ ...u, label: LEVEL_LABEL[u.level] || u.level });
@@ -726,10 +752,18 @@ async function handleApi(url, req) {
       const level = url.searchParams.get('level') || 'exhigh';
       const name = (url.searchParams.get('name') || '').replace(/[\\/:*?"<>|]+/g, ' ').trim();
       let u;
+      const diag = {};
       if (p === 'qq') u = await qqUrl(id, level, sess.qq);
       else if (p === 'kg') u = await kgUrl(id, level, sess.kg);
-      else u = await songUrl(id, level, sess.ncm || {});
-      if (!u) return json({ error: '没有可用地址' }, 404);
+      else u = await songUrl(id, level, sess.ncm || {}, diag);
+      if (!u) {
+        // Worker 出口 IP 不在国内时，网易云经常不给地址；
+        // 这里退到官方 outer 链接，让「手机自己的 IP」去下（一般能成，128k）
+        if (p === 'netease') {
+          return Response.redirect('https://music.163.com/song/media/outer/url?id=' + encodeURIComponent(id) + '.mp3', 302);
+        }
+        return json({ error: '没有可用地址（' + JSON.stringify(diag) + '）', diag }, 404);
+      }
 
       const ref = p === 'qq' ? 'https://y.qq.com/' : p === 'kg' ? 'https://www.kugou.com/' : 'https://music.163.com/';
       const wantProxy = url.searchParams.get('proxy') === '1' || !!name;
