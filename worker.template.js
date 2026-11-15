@@ -10,6 +10,10 @@
 @@QRCODE_LIB@@
 /* ============================================================ */
 
+/* 赞赏码图片（内嵌，base64）：1 = 微信，2 = 支付宝 */
+const DONATE_WECHAT = { type: 'image/webp', b64: '@@WECHAT_B64@@' };
+const DONATE_ALIPAY = { type: 'image/jpeg', b64: '@@ALIPAY_B64@@' };
+
 const APP_VER = '9.0.90';
 const SESSION_TTL = 43200;      // 12 小时
 const UA_NCM = 'NeteaseMusic/' + APP_VER + '.1734239895(8008090);Dalvik/2.1.0 (Linux; U; Android 14)';
@@ -562,16 +566,24 @@ export default {
     const url = new URL(req.url);
     if (url.searchParams.has('a')) return handleApi(url, req);
 
-    // 赞赏图：/1 → public/1.png，/2 → public/2.png（放在仓库 public/ 目录）
+    // 赞赏图：/1 = 微信，/2 = 支付宝（图已内嵌，不需要额外文件）
     const m = /^\/([12])$/.exec(url.pathname);
-    if (m && env && env.ASSETS) {
-      for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
-        const res = await env.ASSETS.fetch(new Request(new URL('/' + m[1] + '.' + ext, url), req));
-        if (res.ok) {
-          return new Response(res.body, {
-            headers: { 'Content-Type': res.headers.get('content-type') || 'image/png', 'Cache-Control': 'public, max-age=600' },
-          });
+    if (m) {
+      // 如果仓库里放了 public/1.png、public/2.png，优先用它们（方便你随时换图）
+      if (env && env.ASSETS) {
+        for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
+          const res = await env.ASSETS.fetch(new Request(new URL('/' + m[1] + '.' + ext, url), req));
+          if (res.ok) {
+            return new Response(res.body, {
+              headers: { 'Content-Type': res.headers.get('content-type') || 'image/png', 'Cache-Control': 'public, max-age=600' },
+            });
+          }
         }
+      }
+      const img = m[1] === '1' ? DONATE_WECHAT : DONATE_ALIPAY;
+      if (img) {
+        const bin = Uint8Array.from(atob(img.b64), c => c.charCodeAt(0));
+        return new Response(bin, { headers: { 'Content-Type': img.type, 'Cache-Control': 'public, max-age=86400' } });
       }
       return new Response('not found', { status: 404 });
     }

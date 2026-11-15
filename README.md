@@ -19,20 +19,12 @@
 
 ## 赞赏码图片（微信 / 支付宝）
 
-在仓库里建 `public/` 目录，放两张图：
+赞赏码图片**已经内嵌在 `worker.js` 里**（`/1` = 微信，`/2` = 支付宝），不用再建 `public/` 目录，也不会因为缺目录而构建失败。
 
-- `public/1.png` —— 微信赞赏码
-- `public/2.png` —— 支付宝赞赏码
+想换成自己的图，两种办法：
 
-也支持 `jpg / jpeg / webp`。Worker 会把 `/1`、`/2` 映射到这两张图；没放图时页面显示「赞赏码」文字占位，不会报错。
-
-`wrangler.toml` 里已经配好：
-
-```toml
-[assets]
-directory = "./public"
-binding = "ASSETS"
-```
+1. 仓库里建 `public/` 目录，放 `1.png`、`2.png`，然后把 `wrangler.toml` 里被注释的 `[assets]` 三行放开
+2. 或者重新生成 `worker.js`（跑 `node build.mjs`，图片放 `assets/1.webp`、`assets/2.jpg`）
 
 ## 网易云扫码登不上怎么办
 
@@ -42,7 +34,7 @@ binding = "ASSETS"
 
 ## 方式一：GitHub → Cloudflare（自动部署）
 
-1. 新建 GitHub 仓库，把 `worker.js`、`wrangler.toml` 和 `public/` 目录推上去（`public/` 里放赞赏图 `1.png`、`2.png`）
+1. 新建 GitHub 仓库，把 `worker.js`、`wrangler.toml` 推上去即可（两个文件就够）
 
 ```bash
 git init

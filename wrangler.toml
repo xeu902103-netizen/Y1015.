@@ -1,10 +1,14 @@
-name = "music-dl"
+name = "y1015"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 
-# 静态资源（赞赏图 /1 /2 从 public/ 目录取）
-[assets]
-directory = "./public"
-binding = "ASSETS"
-
-# 纯 Worker，不需要 KV / D1 / R2
+# 不需要 KV / D1 / R2，也不需要 public/ 目录
+# 赞赏图已内嵌在 worker.js 里（/1 = 微信，/2 = 支付宝）
+#
+# 想换成自己的图：
+#   1) 直接重新生成 worker.js，或
+#   2) 在仓库里建 public/ 目录并放 1.png / 2.png，然后取消下面几行注释
+#
+# [assets]
+# directory = "./public"
+# binding = "ASSETS"
