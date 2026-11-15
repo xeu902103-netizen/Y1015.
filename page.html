@@ -121,7 +121,7 @@ background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 6px 16px 
 
   <div class="card" id="qrCard">
     <div class="card-h"><div class="t"><span class="dot"></span>扫码登录</div></div>
-    <div class="qr-frame" id="qrFrame"><div class="qr-overlay" id="qrOverlay">二维码已失效</div></div>
+    <div class="qr-frame" id="qrFrame"><div class="qr-overlay" id="qrOverlay"><div id="qrOverlayText">二维码已失效</div></div></div>
     <div class="qr-hint" id="qrHint">正在生成二维码…</div>
     <button class="applogin" id="btnAppLogin">📱 就在这台手机上登录</button>
     <div class="help" style="text-align:center;margin:8px 0 0">装了网易云 App 的话，点上面的按钮会直接打开 App 确认登录</div>
@@ -291,10 +291,10 @@ function paintQr(svg){
   f.insertAdjacentHTML('afterbegin', svg);
   return true;
 }
-function setOverlay(show){
+function setOverlay(show, text){
   const o = $('#qrOverlay');
+  if (text) $('#qrOverlayText').textContent = text;
   o.classList.toggle('show', !!show);
-  o.classList.toggle('hide', !show);
 }
 const QR_KEY = 'm_qr_state';
 function storeQr(o){ try{ localStorage.setItem(QR_KEY, JSON.stringify(o)); }catch(e){} }
@@ -359,7 +359,12 @@ async function check(t, ticks){
   if(!t) return;
   try{
     const j = await fetch(BASE + '?a=login_check&p=' + platform + '&token=' + encodeURIComponent(t), { cache:'no-store' }).then(r=>r.json());
-    if(j.status === 'scanned'){ $('#qrHint').textContent = '已扫码，请在手机上点「确认登录」'; setOverlay(true); }
+    if(j.status === 'scanned'){
+      $('#qrHint').innerHTML = '<b style="color:var(--ok)">已扫码</b>，请在手机上点「确认登录」';
+      setOverlay(false);
+      // 每 2 秒催一次，确认后尽快跳转
+      if(ticks && ticks === 1) clearInterval(pollTimer);
+    }
     else if(j.status === 'ok'){
       clearInterval(pollTimer); pollTimer = null;
       saveSess(j.sess);
@@ -376,13 +381,20 @@ async function check(t, ticks){
       $('#qrHint').innerHTML = '<span style="color:var(--ok);font-weight:700">登录成功 ✓</span>';
       setOverlay(false);
       toast('登录成功');
-      setTimeout(refreshStatus, 800);
+      // 立刻再取一次昵称/头像/VIP（803 里可能只拿到「已登录」）
+      (async () => {
+        try {
+          const me = await fetch(BASE + '?a=me', { headers: authHeaders(), cache: 'no-store' }).then(r => r.json());
+          if (me && me.loggedIn) { status.netease = me; applyBrand(); }
+        } catch (e) { }
+      })();
+      setTimeout(refreshStatus, 1500);
     }
     else if(j.status === 'expired' || j.status === 'fail'){
       clearInterval(pollTimer); pollTimer = null;
       clearQr();
       $('#qrHint').textContent = j.error || '二维码已失效，点刷新';
-      setOverlay(true);
+      setOverlay(true, '二维码已失效');
     }
     else if(ticks && ticks % 6 === 0){ $('#qrHint').textContent = '仍在等待扫码…（15 分钟内有效）'; }
   }catch(e){}

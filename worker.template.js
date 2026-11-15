@@ -211,6 +211,34 @@ async function webQrCheck(key) {
   return { code: Number(j.code || 0), message: j.message || '', cookies };
 }
 
+/** 用网页接口取账号资料（昵称 / 头像 / VIP），失败再用 eapi */
+async function profile(session) {
+  const ck = 'MUSIC_U=' + encodeURIComponent(session.MUSIC_U || '') +
+    (session.__csrf ? '; __csrf=' + session.__csrf : '');
+  try {
+    const { text } = await httpText('https://music.163.com/api/nuser/account/get', {
+      headers: { 'User-Agent': WEB_UA, Referer: 'https://music.163.com/', Cookie: ck },
+    });
+    const j = JSON.parse(text);
+    const a = j.account || {};
+    const p = j.profile || {};
+    if (p.userId || a.id) {
+      return {
+        loggedIn: true,
+        userId: String(p.userId || a.id || ''),
+        nickname: p.nickname || a.userName || '用户',
+        avatar: p.avatarUrl || '',
+        vip: !!(a.vipType || p.vipType),
+      };
+    }
+  } catch (e) { }
+  try {
+    const me = await loginStatus(session);
+    if (me && me.loggedIn) return me;
+  } catch (e) { }
+  return null;
+}
+
 /* ---------- 会话：签名串（浏览器 localStorage 保存） ---------- */
 const SESS_SECRET = 'ncm-worker-sess-v1-please-change-me';
 async function hmac(data) {
@@ -407,16 +435,18 @@ async function handleApi(url, req) {
   const sess = await readSess(req);
 
   try {
+    if (a === 'me') {
+      if (!sess.ncm || !sess.ncm.MUSIC_U) return json({ loggedIn: false });
+      const me = await profile(sess.ncm);
+      return json(me || { loggedIn: true, nickname: '已登录' });
+    }
+
     if (a === 'status') {
       const out = { netease: { loggedIn: false }, qq: { loggedIn: false }, kg: { loggedIn: false } };
       if (sess.ncm && sess.ncm.MUSIC_U) {
-        // 有 Cookie 就算已登录：账号信息只是锦上添花，取不到不能让界面卡在登录页
-        try {
-          const me = await loginStatus(sess.ncm);
-          out.netease = me.loggedIn ? me : { loggedIn: true, nickname: '已登录', cookieOnly: true };
-        } catch (e) {
-          out.netease = { loggedIn: true, nickname: '已登录', cookieOnly: true };
-        }
+        // 有 Cookie 就算已登录：账号信息只是锦上添花，取不到也不能卡在登录页
+        const me = await profile(sess.ncm);
+        out.netease = me || { loggedIn: true, nickname: '已登录', cookieOnly: true };
       }
       if (sess.qq) out.qq = { loggedIn: true, nickname: qqUin(sess.qq) ? 'QQ ' + qqUin(sess.qq) : '已粘贴 Cookie' };
       if (sess.kg) out.kg = { loggedIn: true, nickname: '已粘贴 Cookie' };
@@ -461,7 +491,7 @@ async function handleApi(url, req) {
         if (!ck || !ck.MUSIC_U) return json({ code: 803, status: 'fail', error: '登录成功但没拿到 Cookie，请刷新重试' });
         const me = { code: 803, status: 'ok', loggedIn: true, nickname: '已登录', sess: await sealSess({ ncm: ck }) };
         try {
-          const info = await loginStatus(ck);
+          const info = await profile(ck);
           if (info && info.loggedIn) Object.assign(me, info);
         } catch (e) { }
         return json(me);
@@ -489,10 +519,8 @@ async function handleApi(url, req) {
       const blob = await sealSess(next);
       const out = { ok: true, sess: blob, netease: { loggedIn: !!sess.ncm }, qq: { loggedIn: false }, kg: { loggedIn: false } };
       if (next.ncm && next.ncm.MUSIC_U) {
-        try {
-          const me = await loginStatus(next.ncm);
-          out.netease = me.loggedIn ? me : { loggedIn: true, nickname: '已登录', cookieOnly: true };
-        } catch (e) { out.netease = { loggedIn: true, nickname: '已登录', cookieOnly: true }; }
+        const me = await profile(next.ncm);
+        out.netease = me || { loggedIn: true, nickname: '已登录', cookieOnly: true };
       }
       if (next.qq) out.qq = { loggedIn: true, nickname: qqUin(next.qq) ? 'QQ ' + qqUin(next.qq) : '已粘贴 Cookie' };
       if (next.kg) out.kg = { loggedIn: true, nickname: '已粘贴 Cookie' };
