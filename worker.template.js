@@ -167,11 +167,48 @@ async function ncm(path, payload, session = {}) {
   return j;
 }
 
+function pickCookieObj(cookies) {
+  const keep = ['MUSIC_U', '__csrf', 'NMTID'];
+  const out = {};
+  for (const k of keep) if (cookies && cookies[k]) out[k] = cookies[k];
+  return out;
+}
+
 function pickLoginCookie(j) {
   const keep = ['MUSIC_U', '__csrf', 'NMTID', 'os', 'appver'];
   const out = {};
   for (const k of keep) if (j.__cookie && j.__cookie[k]) out[k] = j.__cookie[k];
   return out;
+}
+
+/* ---------- 网易云「网页版」扫码接口 ----------
+ * 官网自己用的就是这两个接口；用它生成的 codekey，App 扫码时不会被判「设备环境异常」。
+ * eapi（客户端接口）作为备用。
+ */
+const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+async function webQrUnikey() {
+  const { text } = await httpText('https://music.163.com/api/login/qrcode/unikey?type=3', {
+    headers: { 'User-Agent': WEB_UA, Referer: 'https://music.163.com/' },
+  });
+  const j = JSON.parse(text);
+  return j.unikey || '';
+}
+
+async function webQrCheck(key) {
+  const { text, setCookie } = await httpText(
+    'https://music.163.com/api/login/qrcode/client/login?key=' + encodeURIComponent(key) + '&type=3',
+    { headers: { 'User-Agent': WEB_UA, Referer: 'https://music.163.com/' } });
+  let j = {};
+  try { j = JSON.parse(text); } catch (e) { }
+  const cookies = parseSetCookie(setCookie);
+  if (j.cookie) {
+    for (const kv of String(j.cookie).split(';')) {
+      const i = kv.indexOf('=');
+      if (i > 0) cookies[kv.slice(0, i).trim()] = kv.slice(i + 1).trim();
+    }
+  }
+  return { code: Number(j.code || 0), message: j.message || '', cookies };
 }
 
 /* ---------- 会话：签名串（浏览器 localStorage 保存） ---------- */
@@ -375,23 +412,41 @@ async function handleApi(url, req) {
     }
 
     if (a === 'login_qr') {
-      const k = await ncm('login/qrcode/unikey', { type: 3 });
-      const key = k.unikey || '';
-      if (!key) return json({ error: '获取二维码失败：' + (k.code || '?') }, 502);
+      let key = '';
+      let via = 'web';
+      try { key = await webQrUnikey(); } catch (e) { }
+      if (!key) {
+        via = 'eapi';
+        try {
+          const k = await ncm('login/qrcode/unikey', { type: 3 });
+          key = k.unikey || '';
+        } catch (e) { }
+      }
+      if (!key) return json({ error: '获取二维码失败（网易云接口异常）' }, 502);
       const link = 'https://music.163.com/login?codekey=' + key;
       const blob = await sealSess({ qr: key, ts: Math.floor(Date.now() / 1000) });
-      return json({ token: blob, qrurl: link, svg: qrSvg(link, 4) });
+      return json({ token: blob, qrurl: link, svg: qrSvg(link, 4), via });
     }
 
     if (a === 'login_check') {
       const blob = url.searchParams.get('token') || '';
       const st = await openSess(blob);
       if (!st || !st.qr) return json({ code: 800, status: 'expired', error: '二维码已失效，请刷新' });
-      const r = await ncm('login/qrcode/client/login', { key: st.qr, type: 3 });
-      const code = Number(r.code || 0);
+      let code = 0;
+      let ck = null;
+      let via = 'web';
+      try {
+        const w = await webQrCheck(st.qr);
+        code = w.code;
+        if (code === 803) ck = pickCookieObj(w.cookies);
+      } catch (e) { via = 'eapi'; }
+      if (via === 'eapi' || !code) {
+        const r = await ncm('login/qrcode/client/login', { key: st.qr, type: 3 });
+        code = Number(r.code || 0);
+        if (code === 803) ck = pickLoginCookie(r);
+      }
       if (code === 803) {
-        const ck = pickLoginCookie(r);
-        if (!ck.MUSIC_U) return json({ code: 803, status: 'fail', error: '登录成功但没拿到 Cookie，请刷新重试' });
+        if (!ck || !ck.MUSIC_U) return json({ code: 803, status: 'fail', error: '登录成功但没拿到 Cookie，请刷新重试' });
         const me = { code: 803, status: 'ok', sess: await sealSess({ ncm: ck }) };
         try { Object.assign(me, await loginStatus(ck)); } catch (e) { }
         return json(me);
