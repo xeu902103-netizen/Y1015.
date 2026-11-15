@@ -403,8 +403,14 @@ async function handleApi(url, req) {
   try {
     if (a === 'status') {
       const out = { netease: { loggedIn: false }, qq: { loggedIn: false }, kg: { loggedIn: false } };
-      if (sess.ncm) {
-        try { out.netease = await loginStatus(sess.ncm); } catch (e) { out.netease = { loggedIn: true, nickname: '已登录' }; }
+      if (sess.ncm && sess.ncm.MUSIC_U) {
+        // 有 Cookie 就算已登录：账号信息只是锦上添花，取不到不能让界面卡在登录页
+        try {
+          const me = await loginStatus(sess.ncm);
+          out.netease = me.loggedIn ? me : { loggedIn: true, nickname: '已登录', cookieOnly: true };
+        } catch (e) {
+          out.netease = { loggedIn: true, nickname: '已登录', cookieOnly: true };
+        }
       }
       if (sess.qq) out.qq = { loggedIn: true, nickname: qqUin(sess.qq) ? 'QQ ' + qqUin(sess.qq) : '已粘贴 Cookie' };
       if (sess.kg) out.kg = { loggedIn: true, nickname: '已粘贴 Cookie' };
@@ -447,8 +453,11 @@ async function handleApi(url, req) {
       }
       if (code === 803) {
         if (!ck || !ck.MUSIC_U) return json({ code: 803, status: 'fail', error: '登录成功但没拿到 Cookie，请刷新重试' });
-        const me = { code: 803, status: 'ok', sess: await sealSess({ ncm: ck }) };
-        try { Object.assign(me, await loginStatus(ck)); } catch (e) { }
+        const me = { code: 803, status: 'ok', loggedIn: true, nickname: '已登录', sess: await sealSess({ ncm: ck }) };
+        try {
+          const info = await loginStatus(ck);
+          if (info && info.loggedIn) Object.assign(me, info);
+        } catch (e) { }
         return json(me);
       }
       if (code === 802) return json({ code: 802, status: 'scanned' });
@@ -473,7 +482,12 @@ async function handleApi(url, req) {
       }
       const blob = await sealSess(next);
       const out = { ok: true, sess: blob, netease: { loggedIn: !!sess.ncm }, qq: { loggedIn: false }, kg: { loggedIn: false } };
-      if (next.ncm) { try { out.netease = await loginStatus(next.ncm); } catch (e) { out.netease = { loggedIn: true, nickname: '已粘贴 Cookie' }; } }
+      if (next.ncm && next.ncm.MUSIC_U) {
+        try {
+          const me = await loginStatus(next.ncm);
+          out.netease = me.loggedIn ? me : { loggedIn: true, nickname: '已登录', cookieOnly: true };
+        } catch (e) { out.netease = { loggedIn: true, nickname: '已登录', cookieOnly: true }; }
+      }
       if (next.qq) out.qq = { loggedIn: true, nickname: qqUin(next.qq) ? 'QQ ' + qqUin(next.qq) : '已粘贴 Cookie' };
       if (next.kg) out.kg = { loggedIn: true, nickname: '已粘贴 Cookie' };
       return json(out);

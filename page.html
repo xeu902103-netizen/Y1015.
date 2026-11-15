@@ -279,7 +279,7 @@ async function refreshStatus(){
     status = j;
   } catch(e){}
   applyBrand();
-  if(platform==='netease' && !status.netease.loggedIn) startQr();
+  if(platform==='netease' && !(status.netease && status.netease.loggedIn) && !document.querySelector('#qrFrame svg')) startQr();
 }
 
 /* 扫码 */
@@ -364,10 +364,19 @@ async function check(t, ticks){
       clearInterval(pollTimer); pollTimer = null;
       saveSess(j.sess);
       clearQr();
+      // 直接用 803 的结果把界面切过去，不再等 /status（避免又被拉回登录页）
+      status.netease = {
+        loggedIn: true,
+        nickname: j.nickname || '已登录',
+        avatar: j.avatar || '',
+        vip: !!j.vip,
+        userId: j.userId || '',
+      };
+      applyBrand();
       $('#qrHint').innerHTML = '<span style="color:var(--ok);font-weight:700">登录成功 ✓</span>';
       setOverlay(false);
       toast('登录成功');
-      setTimeout(refreshStatus, 400);
+      setTimeout(refreshStatus, 800);
     }
     else if(j.status === 'expired' || j.status === 'fail'){
       clearInterval(pollTimer); pollTimer = null;
