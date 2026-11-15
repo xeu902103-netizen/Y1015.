@@ -275,12 +275,28 @@ function renderQuality(){
 
 /* 登录状态 */
 async function refreshStatus(){
+  // 本地已经有会话就先显示成已登录，避免因为接口慢/被限而卡在登录页
+  if(sess && !(status.netease && status.netease.loggedIn)){
+    status.netease = { loggedIn: true, nickname: '已登录（读取中）', avatar: '', vip: false };
+    applyBrand();
+  }
   try {
     const j = await fetch(BASE + '?a=status', { headers: authHeaders(), cache:'no-store' }).then(r => r.json());
-    status = j;
+    if(j && j.netease && j.netease.loggedIn) status = j;
+    else if(!sess) status = j;
   } catch(e){}
   applyBrand();
-  if(platform==='netease' && !(status.netease && status.netease.loggedIn) && !document.querySelector('#qrFrame svg')) startQr();
+  if(platform==='netease' && !(status.netease && status.netease.loggedIn) && !document.querySelector('#qrFrame svg')){
+    // 先尝试接着用上次那张（从 App 跳回来时页面会被重载，重新生成就会换 key，导致永远等不到登录）
+    if(!resumeQr()) startQr();
+  }
+  // 登录后补一次真实昵称/头像
+  if(sess && status.netease && status.netease.loggedIn && !status.netease.avatar){
+    try{
+      const me = await fetch(BASE + '?a=me', { headers: authHeaders(), cache:'no-store' }).then(r => r.json());
+      if(me && me.loggedIn){ status.netease = me; applyBrand(); }
+    }catch(e){}
+  }
 }
 
 /* 扫码 */
@@ -407,9 +423,10 @@ async function check(t, ticks){
       $('#qrHint').textContent = j.error || '二维码已失效，点刷新';
       setOverlay(true, '二维码已失效');
     }
-    else if(ticks && ticks % 6 === 0){
-      const d = j.seen ? `（web=${j.seen.web}${j.seen.eapi !== undefined ? ', eapi=' + j.seen.eapi : ''}）` : '';
-      $('#qrHint').textContent = '仍在等待扫码…' + d;
+    else {
+      const d = j.seen ? `web=${j.seen.web}${j.seen.eapi !== undefined ? ', eapi=' + j.seen.eapi : ''}` : ('code=' + j.code);
+      $('#qrHint').innerHTML = (ticks % 6 === 0 || !ticks ? '仍在等待扫码…' : '等待确认…') +
+        `<br><span style="font-size:11.5px;color:var(--sub)">${d}</span>`;
     }
   }catch(e){}
 }
@@ -599,8 +616,7 @@ document.addEventListener('visibilitychange', () => {
 });
 applyBrand();
 refreshStatus();
-// 刚才为了跳 App 离开过页面的话，回来接着等原来那张
-setTimeout(() => { if(platform === 'netease' && !status.netease.loggedIn && $('#qrFrame').querySelector('svg')) resumeQr(); }, 600);
+
 </script>
 </body>
 </html>
