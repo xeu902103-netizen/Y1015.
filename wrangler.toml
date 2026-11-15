@@ -1,0 +1,6 @@
+name = "music-dl"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# 纯 Worker，不需要 KV / D1 / R2
+# 部署：npx wrangler deploy
