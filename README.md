@@ -16,9 +16,33 @@
 | `wrangler.toml` | Cloudflare 配置 |
 | `page.html` / `worker.template.js` / `build.mjs` | 源码与构建脚本（改页面后跑 `node build.mjs` 重新生成 `worker.js`） |
 
+
+## 赞赏码图片（微信 / 支付宝）
+
+在仓库里建 `public/` 目录，放两张图：
+
+- `public/1.png` —— 微信赞赏码
+- `public/2.png` —— 支付宝赞赏码
+
+也支持 `jpg / jpeg / webp`。Worker 会把 `/1`、`/2` 映射到这两张图；没放图时页面显示「赞赏码」文字占位，不会报错。
+
+`wrangler.toml` 里已经配好：
+
+```toml
+[assets]
+directory = "./public"
+binding = "ASSETS"
+```
+
+## 网易云扫码登不上怎么办
+
+1. 打开 `你的域名/?a=diag`，看 `netease_api` 和 `raw_status`
+2. 页面里二维码下方有「就在这台手机上登录」（直接唤起 App 确认，不用别的设备扫）
+3. 还不行就用 Cookie 兜底：在网易云网页版登录后复制 `MUSIC_U=...`，粘到「改用 Cookie 登录」里
+
 ## 方式一：GitHub → Cloudflare（自动部署）
 
-1. 新建 GitHub 仓库，把 `worker.js`、`wrangler.toml` 推上去
+1. 新建 GitHub 仓库，把 `worker.js`、`wrangler.toml` 和 `public/` 目录推上去（`public/` 里放赞赏图 `1.png`、`2.png`）
 
 ```bash
 git init

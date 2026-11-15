@@ -401,12 +401,20 @@ async function handleApi(url, req) {
       const body = await req.json();
       const plat = body.platform;
       const ck = String(body.cookie || '').trim().replace(/\s*\n\s*/g, ' ').replace(/\s*;\s*/g, '; ');
-      if (plat !== 'qq' && plat !== 'kg') return json({ error: '不支持的平台' }, 400);
+      if (!['qq', 'kg', 'netease'].includes(plat)) return json({ error: '不支持的平台' }, 400);
       if (!ck) return json({ error: 'Cookie 不能为空' }, 400);
-      const next = { ...sess, [plat]: ck };
+      let next;
+      if (plat === 'netease') {
+        const mm = /MUSIC_U=([^;]+)/.exec(ck);
+        if (!mm) return json({ error: '没找到 MUSIC_U，请复制完整 Cookie' }, 400);
+        const csrf = /__csrf=([^;]+)/.exec(ck);
+        next = { ...sess, ncm: { MUSIC_U: mm[1], ...(csrf ? { __csrf: csrf[1] } : {}) } };
+      } else {
+        next = { ...sess, [plat]: ck };
+      }
       const blob = await sealSess(next);
       const out = { ok: true, sess: blob, netease: { loggedIn: !!sess.ncm }, qq: { loggedIn: false }, kg: { loggedIn: false } };
-      if (sess.ncm) { try { out.netease = await loginStatus(sess.ncm); } catch (e) { } }
+      if (next.ncm) { try { out.netease = await loginStatus(next.ncm); } catch (e) { out.netease = { loggedIn: true, nickname: '已粘贴 Cookie' }; } }
       if (next.qq) out.qq = { loggedIn: true, nickname: qqUin(next.qq) ? 'QQ ' + qqUin(next.qq) : '已粘贴 Cookie' };
       if (next.kg) out.kg = { loggedIn: true, nickname: '已粘贴 Cookie' };
       return json(out);
@@ -525,9 +533,21 @@ async function handleApi(url, req) {
     }
 
     if (a === 'diag') {
-      const out = { runtime: 'cloudflare-worker', now: new Date().toISOString() };
+      const out = { runtime: 'cloudflare-worker', now: new Date().toISOString(), colo: (req.cf && req.cf.colo) || '' };
       try { out.encoder = typeof qrcode === 'function'; out.svgLen = qrSvg('diag').length; } catch (e) { out.qr_error = String(e); }
-      try { const k = await ncm('login/qrcode/unikey', { type: 3 }); out.netease_api = { code: k.code, has_key: !!k.unikey }; } catch (e) { out.netease_api = { error: String(e) }; }
+      // 直接看一下网易云接口的原始返回，方便判断是不是被墙/限流
+      try {
+        const r = await httpText('https://music.163.com/eapi/login/qrcode/unikey', {
+          method: 'POST',
+          headers: { 'User-Agent': UA_NCM, 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'https://music.163.com/' },
+          body: await eapiPayload('/api/login/qrcode/unikey', { type: 3, header: deviceCookie(), e_r: false }),
+        });
+        out.raw_status = r.status;
+        out.raw_head = (r.text || '').slice(0, 160);
+        try { const j = JSON.parse(r.text); out.netease_api = { code: j.code, has_key: !!j.unikey }; } catch (e) { out.netease_api = { parse_error: true }; }
+      } catch (e) {
+        out.netease_api = { error: String(e) };
+      }
       return json(out);
     }
 
@@ -541,6 +561,20 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (url.searchParams.has('a')) return handleApi(url, req);
+
+    // 赞赏图：/1 → public/1.png，/2 → public/2.png（放在仓库 public/ 目录）
+    const m = /^\/([12])$/.exec(url.pathname);
+    if (m && env && env.ASSETS) {
+      for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
+        const res = await env.ASSETS.fetch(new Request(new URL('/' + m[1] + '.' + ext, url), req));
+        if (res.ok) {
+          return new Response(res.body, {
+            headers: { 'Content-Type': res.headers.get('content-type') || 'image/png', 'Cache-Control': 'public, max-age=600' },
+          });
+        }
+      }
+      return new Response('not found', { status: 404 });
+    }
     return new Response(PAGE, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
     });

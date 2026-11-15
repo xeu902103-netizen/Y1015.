@@ -2,5 +2,9 @@ name = "music-dl"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 
+# 静态资源（赞赏图 /1 /2 从 public/ 目录取）
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
 # 纯 Worker，不需要 KV / D1 / R2
-# 部署：npx wrangler deploy

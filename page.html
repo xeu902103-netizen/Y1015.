@@ -92,6 +92,15 @@ padding:10px 16px;border-radius:999px;font-size:13.5px;opacity:0;pointer-events:
 .helpbox{max-height:56vh;overflow:auto;font-size:13.5px;line-height:1.85}
 .helpbox ol{padding-left:20px}.helpbox code{background:rgba(125,125,125,.14);padding:1px 5px;border-radius:5px}
 .helpbox .k{color:var(--acc);font-weight:700}
+.sponsor-btn{height:38px;padding:0 14px;border-radius:12px;color:#fff;font-size:13.5px;font-weight:700;letter-spacing:2px;
+background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 6px 16px rgba(255,58,58,.28);white-space:nowrap;flex:none}
+.sponsor-btn:active{transform:scale(.96)}
+.dtitle{text-align:center;font-size:20px;font-weight:800;letter-spacing:6px;margin:2px 0 12px}
+.dimg-box{position:relative;display:grid;place-items:center;min-height:220px;border-radius:16px;background:#fff;padding:10px}
+.dimg-box img{max-width:100%;max-height:min(52vh,340px);border-radius:10px;display:none}
+.dempty{color:#b9bec9;font-size:28px;font-weight:800;letter-spacing:8px}
+.dnote{text-align:center;color:var(--sub);font-size:12px;margin-top:10px}
+.applogin{width:100%;margin-top:6px}
 </style>
 </head>
 <body>
@@ -100,6 +109,7 @@ padding:10px 16px;border-radius:999px;font-size:13.5px;opacity:0;pointer-events:
     <div class="logo" id="brandLogo">♪</div>
     <div><h1 id="brandTitle">音乐下载</h1><div class="sub" id="brandSub">网易云 / QQ 音乐 / 酷狗</div></div>
     <div class="spacer"></div>
+    <button class="sponsor-btn" id="btnDonate">赞助</button>
     <button class="icon-btn" id="btnTheme" title="深浅色">◐</button>
   </div>
 
@@ -113,6 +123,8 @@ padding:10px 16px;border-radius:999px;font-size:13.5px;opacity:0;pointer-events:
     <div class="card-h"><div class="t"><span class="dot"></span>扫码登录</div></div>
     <div class="qr-frame" id="qrFrame"><div class="qr-overlay" id="qrOverlay">二维码已失效</div></div>
     <div class="qr-hint" id="qrHint">正在生成二维码…</div>
+    <button class="applogin" id="btnAppLogin">📱 就在这台手机上登录</button>
+    <div class="help" style="text-align:center;margin:8px 0 0">装了网易云 App 的话，点上面的按钮会直接打开 App 确认登录</div>
     <div class="steps"><span>① 打开网易云 App</span><span>② 扫一扫</span><span>③ 确认登录</span></div>
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="ghost small" id="btnRefreshQr" style="flex:1">刷新二维码</button>
@@ -125,6 +137,7 @@ padding:10px 16px;border-radius:999px;font-size:13.5px;opacity:0;pointer-events:
     <div class="card-h"><div class="t"><span class="dot"></span><span id="cookieTitle">登录</span></div>
       <button class="ghost small" id="btnCookieHelp">怎么取？</button></div>
     <div class="help" id="cookieHelp"></div>
+    <div class="help" id="ncmFallbackTips" style="display:none">扫码一直失败？可以直接贴网易云 Cookie：手机浏览器登录 <code>music.163.com</code> 后取 <code>MUSIC_U=</code> 那一段。</div>
     <textarea id="cookieInput" placeholder="粘贴 Cookie，如 uin=o1234567; qm_keyst=xxxx"></textarea>
     <div style="display:flex;gap:8px;margin-top:10px">
       <button id="btnSaveCookie" style="flex:1">保存 Cookie</button>
@@ -148,6 +161,17 @@ padding:10px 16px;border-radius:999px;font-size:13.5px;opacity:0;pointer-events:
   <div class="foot">仅供下载自己有权收听的歌曲 · 登录态只存在你浏览器里</div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div class="modal hide" id="donateModal">
+  <div class="modal-mask" id="donateMask"></div>
+  <div class="modal-box">
+    <div class="modal-h"><span>赞助</span><button class="icon-btn" id="donateClose" style="width:32px;height:32px;font-size:15px">✕</button></div>
+    <div class="dtitle">赞赏码</div>
+    <div class="dtabs" id="dtabs"><button data-k="wechat" class="on">微信</button><button data-k="alipay">支付宝</button></div>
+    <div class="dimg-box"><img id="donateImg" alt="赞赏二维码"><div class="dempty" id="donateEmpty">赞赏码</div></div>
+    <div class="dnote">长按图片识别 · 感谢支持 ♥</div>
+  </div>
+</div>
 
 <div class="modal hide" id="helpModal">
   <div class="modal-mask" id="helpMask"></div>
@@ -220,13 +244,18 @@ function refreshUi(){
   const logged = !!(status[platform] && status[platform].loggedIn);
   const isQr = platform === 'netease';
   $('#qrCard').classList.toggle('hide', !(isQr && !logged));
-  $('#cookieCard').classList.toggle('hide', isQr || logged);
+  // 三个平台都显示 Cookie 卡片：网易云扫码失败时可以改用 Cookie 登录
+  $('#cookieCard').classList.toggle('hide', logged);
+  if(isQr) showNcmFallback(!$('#qrFrame').querySelector('svg'));
   $('#userCard').classList.toggle('hide', !logged);
-  if(!isQr && !logged){
-    $('#cookieTitle').textContent = platform === 'qq' ? '登录 QQ 音乐' : '登录酷狗（可选）';
+  if(!logged){
+    $('#cookieTitle').textContent = platform === 'qq' ? '登录 QQ 音乐'
+      : platform === 'kg' ? '登录酷狗（可选）' : '改用 Cookie 登录（可选）';
     $('#cookieHelp').innerHTML = platform === 'qq'
       ? 'QQ 音乐没有可用的网页扫码接口，需要粘贴 Cookie（含 <code>uin=</code> 和 <code>qm_keyst=</code>）。'
-      : '不贴 Cookie 也能下免费歌曲；会员/付费歌曲需要登录后的 Cookie（含 <code>userid=</code>、<code>token=</code>）。';
+      : platform === 'kg'
+        ? '不贴 Cookie 也能下免费歌曲；会员/付费歌曲需要登录后的 Cookie（含 <code>userid=</code>、<code>token=</code>）。'
+        : '扫码登不上时，可以贴网易云网页版的 Cookie，只要含 <code>MUSIC_U=</code> 这一段就行。';
   }
   if(logged){
     const me = status[platform];
@@ -267,6 +296,18 @@ function setOverlay(show){
   o.classList.toggle('show', !!show);
   o.classList.toggle('hide', !show);
 }
+const QR_KEY = 'm_qr_state';
+function storeQr(o){ try{ localStorage.setItem(QR_KEY, JSON.stringify(o)); }catch(e){} }
+function loadQr(){
+  try{
+    const j = JSON.parse(localStorage.getItem(QR_KEY) || 'null');
+    if(!j || !j.token) return null;
+    if(Date.now() - (j.ts||0) > 13*60*1000) return null;
+    return j;
+  }catch(e){ return null; }
+}
+function clearQr(){ try{ localStorage.removeItem(QR_KEY); }catch(e){} }
+
 async function startQr(){
   clearInterval(pollTimer); pollTimer = null;
   [...$('#qrFrame').querySelectorAll('svg')].forEach(n => n.remove());
@@ -276,16 +317,42 @@ async function startQr(){
     const r = await api('login_qr');
     paintQr(r.svg);
     qrLinkText = r.qrurl || '';
-    if(!r.svg){ $('#qrHint').textContent = '二维码生成失败，点刷新重试'; setOverlay(true); return; }
+    if(!r.svg){
+      $('#qrHint').innerHTML = '二维码生成失败<br><span style="font-size:12px">打开 ?a=diag 看诊断</span>';
+      setOverlay(true); showNcmFallback(true); return;
+    }
     $('#qrHint').innerHTML = '用手机<b>网易云音乐</b>扫一扫，然后在手机上点「确认登录」';
     window._qrToken = r.token;
+    storeQr({ token: r.token, svg: r.svg, url: qrLinkText, ts: Date.now() });
     let ticks = 0;
-    pollTimer = setInterval(() => { ticks++; check(tok(r.token), ticks); }, 1800);
-    check(tok(r.token), 0);
+    pollTimer = setInterval(() => { ticks++; check(r.token, ticks); }, 1800);
+    check(r.token, 0);
   }catch(e){
-    $('#qrHint').textContent = '生成失败：' + e.message;
+    $('#qrHint').innerHTML = '生成失败：' + esc(e.message);
     setOverlay(true);
+    showNcmFallback(true);
   }
+}
+
+function showNcmFallback(on){
+  // 网易云也可以贴 Cookie，扫码不行时的备用方案
+  const el = $('#ncmFallbackTips');
+  if(el) el.style.display = on ? '' : 'none';
+}
+
+/** 回到页面时接着等原来那张二维码（不换新的） */
+function resumeQr(){
+  const st = loadQr();
+  if(!st) return false;
+  if(!paintQr(st.svg)) return false;
+  qrLinkText = st.url || '';
+  setOverlay(false);
+  $('#qrHint').innerHTML = '还在等确认…（用<b>网易云音乐</b>点「确认登录」）';
+  window._qrToken = st.token;
+  clearInterval(pollTimer); pollTimer = null;
+  pollTimer = setInterval(() => check(st.token, 1), 1800);
+  check(st.token, 0);
+  return true;
 }
 function tok(t){ window._qrToken = t; return t; }
 async function check(t, ticks){
@@ -296,6 +363,7 @@ async function check(t, ticks){
     else if(j.status === 'ok'){
       clearInterval(pollTimer); pollTimer = null;
       saveSess(j.sess);
+      clearQr();
       $('#qrHint').innerHTML = '<span style="color:var(--ok);font-weight:700">登录成功 ✓</span>';
       setOverlay(false);
       toast('登录成功');
@@ -303,14 +371,23 @@ async function check(t, ticks){
     }
     else if(j.status === 'expired' || j.status === 'fail'){
       clearInterval(pollTimer); pollTimer = null;
+      clearQr();
       $('#qrHint').textContent = j.error || '二维码已失效，点刷新';
       setOverlay(true);
     }
     else if(ticks && ticks % 6 === 0){ $('#qrHint').textContent = '仍在等待扫码…（15 分钟内有效）'; }
   }catch(e){}
 }
+$('#btnAppLogin').onclick = () => {
+  if(!qrLinkText){ toast('二维码还没生成好，稍等'); return; }
+  location.href = qrLinkText;   // 网易云 App 注册了这个链接，会直接唤起并弹「确认登录」
+};
 $('#btnRefreshQr').onclick = startQr;
-$('#btnQrLink').onclick = () => { const l=$('#qrLink'); l.classList.toggle('hide'); l.innerHTML = `<a href="${esc(qrLinkText)}">${esc(qrLinkText)}</a>`; };
+$('#btnQrLink').onclick = () => {
+  const l = $('#qrLink');
+  l.classList.toggle('hide');
+  l.innerHTML = `<a href="${esc(qrLinkText)}">${esc(qrLinkText)}</a>`;
+};
 
 /* Cookie */
 $('#btnSaveCookie').onclick = async () => {
@@ -345,6 +422,20 @@ $('#btnLogout').onclick = async () => {
   if(platform==='netease'){ sess=''; localStorage.removeItem('m_sess'); }
   applyBrand();
 };
+
+/* 赞赏：/1 = 微信，/2 = 支付宝（图片放仓库 public/1.png、public/2.png） */
+let donateTab = 'wechat';
+function renderDonate(){
+  const img = $('#donateImg');
+  const empty = $('#donateEmpty');
+  img.onload = () => { img.style.display = 'block'; empty.style.display = 'none'; };
+  img.onerror = () => { img.style.display = 'none'; empty.style.display = 'block'; };
+  img.src = donateTab === 'wechat' ? '/1' : '/2';
+  $$('#dtabs button').forEach(b => b.classList.toggle('on', b.dataset.k === donateTab));
+}
+$('#btnDonate').onclick = () => { $('#donateModal').classList.remove('hide'); renderDonate(); };
+$('#donateClose').onclick = $('#donateMask').onclick = () => $('#donateModal').classList.add('hide');
+$$('#dtabs button').forEach(b => b.onclick = () => { donateTab = b.dataset.k; renderDonate(); });
 
 /* 教程 */
 const HELP = {
@@ -430,6 +521,8 @@ document.addEventListener('visibilitychange', () => {
 });
 applyBrand();
 refreshStatus();
+// 刚才为了跳 App 离开过页面的话，回来接着等原来那张
+setTimeout(() => { if(platform === 'netease' && !status.netease.loggedIn && $('#qrFrame').querySelector('svg')) resumeQr(); }, 600);
 </script>
 </body>
 </html>
