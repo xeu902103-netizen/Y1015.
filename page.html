@@ -482,14 +482,19 @@ function renderResult(r){
   }
   $$('button[data-act]', box).forEach(b => b.onclick = () => {
     const row = b.closest('.song'), id = row.dataset.id;
-    if(b.dataset.act==='dl') downloadSong(id,b); else showUrl(id,row,b);
+    const song = lastList.find(x => x.id === id);
+    if(b.dataset.act==='dl') downloadSong(id, b, song ? (song.artists ? song.artists + ' - ' : '') + song.name : ''); else showUrl(id,row,b);
   });
 }
-function dlUrl(id){ return BASE + '?a=download&p='+platform+'&id='+encodeURIComponent(id)+'&level='+encodeURIComponent(level); }
+function dlUrl(id, name){
+  let u = BASE + '?a=download&p='+platform+'&id='+encodeURIComponent(id)+'&level='+encodeURIComponent(level);
+  if(name) u += '&name=' + encodeURIComponent(name);
+  return u;
+}
 function triggerDownload(u){ const a=document.createElement('a'); a.href=u; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); }
-function downloadSong(id, btn){
+function downloadSong(id, btn, name){
   btn.disabled=true; const old=btn.textContent; btn.innerHTML='<span class="spin"></span>';
-  triggerDownload(dlUrl(id));
+  triggerDownload(dlUrl(id, name));
   toast('已开始下载');
   setTimeout(()=>{ btn.disabled=false; btn.textContent=old; },1500);
 }

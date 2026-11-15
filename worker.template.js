@@ -263,6 +263,12 @@ function qrSvg(text, margin = 4) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${total} ${total}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${cells}</g></svg>`;
 }
 
+/** 音乐 CDN 都支持 https，升级一下，避免 https 页面下载 http 资源被拦 */
+function httpsify(u) {
+  if (typeof u !== 'string') return u;
+  return u.replace(/^http:\/\//, 'https://');
+}
+
 /* ---------- 网易云业务 ---------- */
 async function loginStatus(session) {
   const j = await ncm('nuser/account/get', {}, session);
@@ -294,9 +300,9 @@ async function songDetail(ids, session) {
 }
 
 async function songUrl(id, level, session) {
-  const j = await ncm('song/enhance/player/url/v1', { ids: '[', level, encodeType: 'mp3' }.ids + id + ']', session);
+  const j = await ncm('song/enhance/player/url/v1', { ids: '[' + id + ']', level, encodeType: 'mp3' }, session);
   const d = (j.data && j.data[0]) || {};
-  if (d.url) return { url: d.url, type: d.type || 'mp3', br: d.br || 0, size: d.size || 0, level };
+  if (d.url) return { url: httpsify(d.url), type: d.type || 'mp3', br: d.br || 0, size: d.size || 0, level };
   const fb = { lossless: 'exhigh', exhigh: 'higher', higher: 'standard', standard: null }[level];
   return fb ? songUrl(id, fb, session) : null;
 }
@@ -348,7 +354,7 @@ async function qqUrl(mid, level, cookie) {
   }
   const sip = (d.sip && d.sip[0]) || 'http://dl.stream.qqmusic.qq.com/';
   return {
-    url: sip.replace(/\/$/, '') + '/' + info.purl,
+    url: httpsify(sip.replace(/\/$/, '') + '/' + info.purl),
     type: level === 'lossless' ? 'flac' : 'mp3',
     br: { standard: 128000, higher: 192000, exhigh: 320000, lossless: 900000 }[level] || 128000,
     size: 0, level,
@@ -379,7 +385,7 @@ async function kgUrl(hash, level, cookie) {
     throw new Error('酷狗没有返回播放地址，换一首或稍后重试');
   }
   return {
-    url: play, type: (j.extName || 'mp3').toLowerCase(),
+    url: httpsify(play), type: (j.extName || 'mp3').toLowerCase(),
     br: (j.bitRate || 0) * 1000, size: j.fileSize || 0, level,
   };
 }
@@ -596,13 +602,32 @@ async function handleApi(url, req) {
     if (a === 'download') {
       const id = url.searchParams.get('id') || '';
       const level = url.searchParams.get('level') || 'exhigh';
+      const name = (url.searchParams.get('name') || '').replace(/[\\/:*?"<>|]+/g, ' ').trim();
       let u;
       if (p === 'qq') u = await qqUrl(id, level, sess.qq);
       else if (p === 'kg') u = await kgUrl(id, level, sess.kg);
       else u = await songUrl(id, level, sess.ncm || {});
       if (!u) return json({ error: '没有可用地址' }, 404);
-      // 直接 302 到音乐 CDN，浏览器自己下载（不占用 Worker 流量）
-      return Response.redirect(u.url, 302);
+
+      const ref = p === 'qq' ? 'https://y.qq.com/' : p === 'kg' ? 'https://www.kugou.com/' : 'https://music.163.com/';
+      const wantProxy = url.searchParams.get('proxy') === '1' || !!name;
+
+      if (!wantProxy) {
+        // 默认 302 直连 CDN：不占 Worker 带宽，速度最快
+        return Response.redirect(u.url, 302);
+      }
+      // 需要带文件名时由 Worker 转发
+      const r = await fetch(u.url, { headers: { 'User-Agent': UA_WEB, Referer: ref } });
+      if (!r.ok) return json({ error: '下载失败（CDN 返回 ' + r.status + '）' }, 502);
+      const fn = (name || 'music') + '.' + (u.type || 'mp3');
+      const headers = {
+        'Content-Type': r.headers.get('content-type') || 'audio/mpeg',
+        'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(fn),
+        'Cache-Control': 'no-store',
+      };
+      const len = r.headers.get('content-length');
+      if (len) headers['Content-Length'] = len;
+      return new Response(r.body, { headers });
     }
 
     if (a === 'diag') {
