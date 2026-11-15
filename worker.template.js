@@ -168,9 +168,11 @@ async function ncm(path, payload, session = {}) {
 }
 
 function pickCookieObj(cookies) {
-  const keep = ['MUSIC_U', '__csrf', 'NMTID'];
+  const drop = ['Max-Age', 'Path', 'Domain', 'Expires', 'SameSite', 'Secure', 'HttpOnly'];
   const out = {};
-  for (const k of keep) if (cookies && cookies[k]) out[k] = cookies[k];
+  for (const [k, v] of Object.entries(cookies || {})) {
+    if (!drop.includes(k)) out[k] = v;
+  }
   return out;
 }
 
@@ -346,12 +348,28 @@ async function songDetail(ids, session) {
   return (j.songs || []).map(songOf);
 }
 
-async function songUrl(id, level, session) {
-  const j = await ncm('song/enhance/player/url/v1', { ids: '[' + id + ']', level, encodeType: 'mp3' }, session);
-  const d = (j.data && j.data[0]) || {};
-  if (d.url) return { url: httpsify(d.url), type: d.type || 'mp3', br: d.br || 0, size: d.size || 0, level };
+const LEVEL_BR = { standard: 128000, higher: 192000, exhigh: 320000, lossless: 999000 };
+
+/** 取播放地址：客户端接口 → 老接口，多音质逐级降级；失败时带回网易云的原始 code */
+async function songUrl(id, level, session, diag = {}) {
+  try {
+    const j = await ncm('song/enhance/player/url/v1', { ids: '[' + id + ']', level, encodeType: 'mp3' }, session);
+    const d = (j.data && j.data[0]) || {};
+    if (d.url) return { url: httpsify(d.url), type: d.type || 'mp3', br: d.br || 0, size: d.size || 0, level };
+    diag.v1 = d.code || 0;
+    if (d.fee !== undefined) diag.fee = d.fee;
+  } catch (e) { diag.v1 = 'err'; }
+
+  try {
+    const j2 = await ncm('song/url', { ids: '[' + id + ']', br: LEVEL_BR[level] || 128000 }, session);
+    const d2 = (j2.data && j2.data[0]) || {};
+    if (d2.url) return { url: httpsify(d2.url), type: d2.type || 'mp3', br: d2.br || 0, size: d2.size || 0, level };
+    diag.v0 = d2.code || 0;
+  } catch (e) { diag.v0 = 'err'; }
+
   const fb = { lossless: 'exhigh', exhigh: 'higher', higher: 'standard', standard: null }[level];
-  return fb ? songUrl(id, fb, session) : null;
+  if (fb) return songUrl(id, fb, session, diag);
+  return null;
 }
 
 const LEVEL_LABEL = { standard: '标准', higher: '较高', exhigh: '极高 320k', lossless: '无损' };
@@ -694,8 +712,12 @@ async function handleApi(url, req) {
       let u;
       if (p === 'qq') u = await qqUrl(id, level, sess.qq);
       else if (p === 'kg') u = await kgUrl(id, level, sess.kg);
-      else u = await songUrl(id, level, sess.ncm || {});
-      if (!u) return json({ error: '没有可用地址（可能需要 VIP 或无版权）' }, 404);
+      else {
+        const diag = {};
+        u = await songUrl(id, level, sess.ncm || {}, diag);
+        if (!u) return json({ error: '没有可用地址（网易云返回 ' + JSON.stringify(diag) + '）', diag }, 404);
+      }
+      if (!u) return json({ error: '没有可用地址' }, 404);
       return json({ ...u, label: LEVEL_LABEL[u.level] || u.level });
     }
 
