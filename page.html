@@ -159,9 +159,25 @@ background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 6px 16px 
     <div id="results"></div>
   </div>
 
-  <div class="foot">仅供下载自己有权收听的歌曲 · 登录态只存在你浏览器里</div>
+  <div class="foot">仅供下载自己有权收听的歌曲 · 登录态只存在你浏览器里<br>
+    <a href="javascript:void(0)" id="btnDiag" style="color:var(--acc);text-decoration:none">诊断</a>
+    <span style="opacity:.4"> · </span>
+    <a href="?a=diag" target="_blank" style="color:var(--acc);text-decoration:none">服务端自检</a>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div class="modal hide" id="diagModal">
+  <div class="modal-mask" id="diagMask"></div>
+  <div class="modal-box">
+    <div class="modal-h"><span>诊断信息</span><button class="icon-btn" id="diagClose" style="width:32px;height:32px;font-size:15px">✕</button></div>
+    <pre id="diagBody" style="max-height:48vh;overflow:auto;font-size:11.5px;line-height:1.6;white-space:pre-wrap;word-break:break-all;background:rgba(125,125,125,.10);padding:10px;border-radius:12px;margin:0"></pre>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="diagCopy" style="flex:1">复制</button>
+      <button class="ghost" id="diagTest">测一次取地址</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal hide" id="donateModal">
   <div class="modal-mask" id="donateMask"></div>
@@ -184,6 +200,17 @@ background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 6px 16px 
 </div>
 
 <script>
+/* ---------- 诊断日志（出错时能一键复制发我） ---------- */
+const LOG = [];
+function logEvent(type, data){
+  try{
+    LOG.push({ t: new Date().toTimeString().slice(0,8), type, data });
+    if(LOG.length > 40) LOG.shift();
+  }catch(e){}
+}
+window.onerror = (msg, src, line, col) => { logEvent('JS错误', msg + ' @' + line + ':' + col); };
+window.addEventListener('unhandledrejection', e => logEvent('Promise错误', String(e.reason && e.reason.message || e.reason)));
+
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const BASE = location.pathname;
@@ -326,6 +353,7 @@ function loadQr(){
 function clearQr(){ try{ localStorage.removeItem(QR_KEY); }catch(e){} }
 
 async function startQr(){
+  logEvent('开始生成二维码');
   clearInterval(pollTimer); pollTimer = null;
   [...$('#qrFrame').querySelectorAll('svg')].forEach(n => n.remove());
   setOverlay(false);
@@ -333,6 +361,7 @@ async function startQr(){
   $('#btnForceLogin').classList.add('hide');
   try{
     const r = await api('login_qr');
+    logEvent('二维码已返回', { via: r.via, svgLen: (r.svg || '').length, tokenLen: (r.token || '').length });
     paintQr(r.svg);
     qrLinkText = r.qrurl || '';
     if(!r.svg){
@@ -377,6 +406,7 @@ async function check(t, ticks){
   if(!t) return;
   try{
     const j = await fetch(BASE + '?a=login_check&p=' + platform + '&token=' + encodeURIComponent(t), { cache:'no-store' }).then(r=>r.json());
+    logEvent('轮询', j);
     if(j.status === 'scanned'){
       $('#qrHint').innerHTML = '<b style="color:var(--ok)">已扫码</b>，请在手机上点「确认登录」…';
       $('#btnForceLogin').classList.remove('hide');
@@ -396,6 +426,7 @@ async function check(t, ticks){
       clearInterval(pollTimer); pollTimer = null;
       saveSess(j.sess);
       clearQr();
+      logEvent('登录成功', { nickname: j.nickname, hasSess: !!j.sess });
       // 直接用 803 的结果把界面切过去，不再等 /status（避免又被拉回登录页）
       status.netease = {
         loggedIn: true,
@@ -404,7 +435,7 @@ async function check(t, ticks){
         vip: !!j.vip,
         userId: j.userId || '',
       };
-      applyBrand();
+      try { applyBrand(); } catch (e) { logEvent('切换界面失败', String(e && e.message)); }
       $('#qrHint').innerHTML = '<span style="color:var(--ok);font-weight:700">登录成功 ✓</span>';
       setOverlay(false);
       toast('登录成功');
@@ -511,6 +542,33 @@ $('#btnLogout').onclick = async () => {
   status[platform] = { loggedIn:false };
   if(platform==='netease'){ sess=''; localStorage.removeItem('m_sess'); }
   applyBrand();
+};
+
+/* 诊断 */
+function renderDiag(){
+  const lines = LOG.map(x => x.t + ' ' + x.type + ' ' + (x.data === undefined ? '' : JSON.stringify(x.data)));
+  lines.push('---');
+  lines.push('platform=' + platform + ' sess=' + (sess ? sess.slice(0,24) + '…(' + sess.length + ')' : '(空)'));
+  lines.push('qrToken=' + (window._qrToken ? window._qrToken.slice(0,24) + '…' : '(空)'));
+  lines.push('loggedIn=' + JSON.stringify(status.netease));
+  $('#diagBody').textContent = lines.join('\n');
+}
+$('#btnDiag').onclick = () => { $('#diagModal').classList.remove('hide'); renderDiag(); };
+$('#diagClose').onclick = $('#diagMask').onclick = () => $('#diagModal').classList.add('hide');
+$('#diagCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('#diagBody').textContent); toast('已复制，发给作者即可'); }
+  catch(e){ toast('复制失败，请长按选择'); }
+};
+$('#diagTest').onclick = async () => {
+  const first = lastList[0];
+  if(!first){ toast('先搜一首歌'); return; }
+  try{
+    const r = await api('url', { method:'POST', body: JSON.stringify({ id: first.id, level }) });
+    logEvent('取地址成功', { id: first.id, url: String(r.url).slice(0, 60) });
+  }catch(e){
+    logEvent('取地址失败', { id: first.id, msg: e.message });
+  }
+  renderDiag();
 };
 
 /* 赞赏：/1 = 微信，/2 = 支付宝（图片放仓库 public/1.png、public/2.png） */
