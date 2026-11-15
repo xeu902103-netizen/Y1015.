@@ -150,12 +150,17 @@ async function ncm(path, payload, session = {}) {
   payload.header = dev;
   payload.e_r = false;
   const body = await eapiPayload(uri, payload);
+  // 关键：必须把 Cookie 头带上，否则网易云按未登录处理（只能拿到 30 秒试听，甚至没有地址）
+  const cookieHeader = Object.entries(dev)
+    .map(([k, v]) => k + '=' + v)
+    .join('; ');
   const { text, setCookie } = await httpText('https://music.163.com/eapi/' + uri.slice(5), {
     method: 'POST',
     headers: {
       'User-Agent': UA_NCM,
       'Content-Type': 'application/x-www-form-urlencoded',
       Referer: 'https://music.163.com/',
+      Cookie: cookieHeader,
     },
     body,
   });
@@ -379,7 +384,12 @@ async function songUrl(id, level, session, diag = {}) {
   try {
     const j = await ncm('song/enhance/player/url/v1', { ids: '[' + id + ']', level, encodeType: 'mp3' }, session);
     const d = (j.data && j.data[0]) || {};
-    if (d.url) return { url: httpsify(d.url), type: d.type || 'mp3', br: d.br || 0, size: d.size || 0, level };
+    if (d.url) {
+      return {
+        url: httpsify(d.url), type: d.type || 'mp3', br: d.br || 0, size: d.size || 0, level,
+        trial: !!(d.freeTrialInfo || d.freeTrialPrivilege && d.freeTrialPrivilege.resConsume),
+      };
+    }
     diag.v1 = d.code || 0;
     if (d.fee !== undefined) diag.fee = d.fee;
   } catch (e) { diag.v1 = 'err'; }

@@ -644,7 +644,8 @@ async function showUrl(id,row,btn){
     const r = await api('url',{method:'POST', body: JSON.stringify({id, level})});
     const line=document.createElement('div');
     line.className='url-line';
-    line.innerHTML = `${esc(r.label||'')} · ${r.br?Math.round(r.br/1000)+' kbps':''} ${r.size?Math.round(r.size/1048576*10)/10+' MB':''}<br><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(String(r.url).slice(0,90))}…</a>`;
+    const warn = r.trial ? '<div style="color:#e08a00;margin-bottom:2px">⚠ 这是 30 秒试听片段（登录态没生效：换首歌或重新登录）</div>' : '';
+    line.innerHTML = warn + `${esc(r.label||'')} · ${r.br?Math.round(r.br/1000)+' kbps':''} ${r.size?Math.round(r.size/1048576*10)/10+' MB':''}<br><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(String(r.url).slice(0,90))}…</a>`;
     row.after(line);
     btn.textContent='收起'; btn.disabled=false;
     btn.onclick = () => { line.remove(); btn.textContent=old; btn.onclick = () => showUrl(id,row,btn); };
